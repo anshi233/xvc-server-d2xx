@@ -77,7 +77,7 @@ static int on_client_data(void *user_data, tcp_connection_t *conn)
     
     /* Initialize XVC context for this connection if needed */
     if (ctx->xvc.socket_fd != conn->fd) {
-        xvc_init(&ctx->xvc, conn->fd, ctx->ftdi);
+        xvc_init(&ctx->xvc, conn->fd, ctx->ftdi, ctx->config->max_vector_size);
     }
     
     /* Handle XVC protocol */
@@ -85,6 +85,7 @@ static int on_client_data(void *user_data, tcp_connection_t *conn)
     
     if (ret != 0) {
         xvc_close(&ctx->xvc);
+        xvc_free(&ctx->xvc);
         return 1;  /* Close connection */
     }
     

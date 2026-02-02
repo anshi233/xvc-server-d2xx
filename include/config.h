@@ -19,8 +19,9 @@
 
 /* Default values */
 #define DEFAULT_BASE_PORT   2542
-#define DEFAULT_FREQUENCY   10000000  /* 10 MHz */
+#define DEFAULT_FREQUENCY   30000000  /* 30 MHz (max for MPSSE) */
 #define DEFAULT_LATENCY     2         /* ms */
+#define DEFAULT_MAX_VECTOR_SIZE  4096 /* 4KB default, up to 256KB supported */
 
 /* Device ID types */
 typedef enum {
@@ -68,6 +69,7 @@ typedef struct {
     int latency_timer;      /* FTDI latency timer in ms */
     bool async_mode;        /* Use async FTDI operations */
     jtag_mode_t jtag_mode;  /* JTAG adapter mode (MPSSE or bitbang) */
+    int max_vector_size;    /* XVC max vector buffer size in bytes */
     
     /* Whitelist settings */
     whitelist_mode_t whitelist_mode;

@@ -63,6 +63,7 @@ void config_init(xvc_global_config_t *config)
         config->instances[i].latency_timer = DEFAULT_LATENCY;
         config->instances[i].async_mode = false;
         config->instances[i].jtag_mode = JTAG_MODE_MPSSE;  /* Default to fast MPSSE mode */
+        config->instances[i].max_vector_size = DEFAULT_MAX_VECTOR_SIZE;
         config->instances[i].whitelist_mode = WHITELIST_OFF;
         config->instances[i].enabled = false;
     }
@@ -210,6 +211,8 @@ int config_load(xvc_global_config_t *config, const char *path)
                         } else if (strcmp(setting, "jtag_mode") == 0) {
                             /* Only MPSSE mode is supported - bitbang mode removed */
                             inst->jtag_mode = JTAG_MODE_MPSSE;
+                        } else if (strcmp(setting, "vector_buffer_size") == 0) {
+                            inst->max_vector_size = atoi(value);
                         }
                     }
                 }

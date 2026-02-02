@@ -52,7 +52,7 @@
 #define OP_CLK_TMS_READ            0x6B   /* Clock TMS out, read TDO */
 
 #define MPSSE_DEFAULT_LATENCY   1
-#define MPSSE_DEFAULT_CLOCK    10000000
+#define MPSSE_DEFAULT_CLOCK    30000000
 #define MPSSE_MAX_FREQUENCY    30000000
 #define MPSSE_MIN_FREQUENCY       457
 
