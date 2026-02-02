@@ -286,16 +286,15 @@ int xvc_handle(xvc_context_t *ctx, uint32_t frequency)
                     ctx->jtag_state = jtag_step(ctx->jtag_state, tms);
                 }
 
-                /* Perform scan operation with chunking for large transfers
-                 * FTDI chip buffer is limited (1KB for FT232H, 4KB for FT2232H)
-                 * Use 1KB chunks to ensure reliable operation with all FTDI chips
+                /* Perform scan operation WITHOUT chunking
+                 * EXPERIMENT: Send all data at once to FT_Write
+                 * FT_Write should support up to 64KB per call
                  */
-                if (ftdi_adapter_scan_chunked(ctx->ftdi,
-                                               ctx->vector_buf,
-                                               ctx->vector_buf + nr_bytes,
-                                               ctx->result_buf,
-                                               len,
-                                               1024) < 0) {
+                if (ftdi_adapter_scan(ctx->ftdi,
+                                       ctx->vector_buf,
+                                       ctx->vector_buf + nr_bytes,
+                                       ctx->result_buf,
+                                       len) < 0) {
                     LOG_ERROR("FTDI scan failed");
                     return -1;
                 }

@@ -76,8 +76,8 @@ enum jtag_state {
     UPDATE_IR
 };
 
-/* Memory pool for observers */
-#define MEMORY_POOL_SIZE 4096
+/* Memory pool for observers - increased for 64KB transfers */
+#define MEMORY_POOL_SIZE 65536
 
 struct memory_pool {
     uint8_t buffer[MEMORY_POOL_SIZE * 256];
@@ -206,9 +206,9 @@ mpsse_context_t* mpsse_adapter_create(void)
     mpsse_context_t *ctx = calloc(1, sizeof(mpsse_context_t));
     if (!ctx) return NULL;
 
-    /* Initial buffer allocation with minimum size (1KB for FT232H) */
-    ctx->buffer.max_tx_buffer_bytes = 3 * 1024;
-    ctx->buffer.max_rx_buffer_bytes = 1024;
+    /* Initial buffer allocation with large size for 64KB transfers */
+    ctx->buffer.max_tx_buffer_bytes = 3 * 65536;
+    ctx->buffer.max_rx_buffer_bytes = 65536;
 
     ctx->buffer.tx_buffer = malloc(ctx->buffer.max_tx_buffer_bytes);
     ctx->buffer.rx_buffer = malloc(ctx->buffer.max_rx_buffer_bytes);
@@ -222,7 +222,7 @@ mpsse_context_t* mpsse_adapter_create(void)
 
     ctx->state = TEST_LOGIC_RESET;
     ctx->last_tdi = 0;
-    ctx->chip_buffer_size = 1024;
+    ctx->chip_buffer_size = 65536;  /* Experiment: use 64KB for large transfers */
     pool_reset(&ctx->observer_pool);
     gettimeofday(&ctx->last_flush_time, NULL);
     ctx->total_flushes = 0;
@@ -469,11 +469,7 @@ static int mpsse_buffer_ensure_can_append(mpsse_context_t *ctx, int tx_bytes, in
         }
     }
     
-    if (tx_bytes > 512 || rx_bytes > 512) {
-        if (mpsse_buffer_flush(ctx) < 0) {
-            return -1;
-        }
-    }
+    /* EXPERIMENT: Removed 512-byte early flush to allow 64KB transfers */
     
     return 0;
 }
@@ -484,7 +480,7 @@ static int mpsse_buffer_append(mpsse_context_t *ctx, const uint8_t *tx_data, int
 {
     struct mpsse_buffer *b = &ctx->buffer;
     
-    int flush_threshold = 960;
+    int flush_threshold = 61440;  /* Experiment: 60KB threshold for 64KB transfers */
     
     bool would_overflow = (b->tx_num_bytes + tx_bytes > b->max_tx_buffer_bytes ||
                            b->rx_num_bytes + rx_bytes > b->max_rx_buffer_bytes);
@@ -904,17 +900,12 @@ int mpsse_adapter_open(mpsse_context_t *ctx, int vendor, int product,
     if (ftStatus == FT_OK) {
         LOG_INFO("Device: %s (ID: 0x%04X), Serial: %s", description, deviceID, serialNumber);
         
-        /* Set buffer sizes based on chip type */
-        if (ftDevice == FT_DEVICE_232H) {
-            ctx->chip_buffer_size = 1024;
-            LOG_INFO("Detected FT232H, using 1KB buffer");
-        } else {
-            ctx->chip_buffer_size = 4096;
-            LOG_INFO("Detected FT2232H/FT4232H, using 4KB buffer");
-        }
+        /* Set buffer sizes for 64KB experiment (bypass chip limits) */
+        ctx->chip_buffer_size = 65536;
+        LOG_INFO("Detected FTDI device, using 64KB buffer for large transfer experiment");
     } else {
-        ctx->chip_buffer_size = 4096;  /* Default */
-        LOG_WARN("Could not detect device type, using default 4KB buffer");
+        ctx->chip_buffer_size = 65536;  /* Experiment: use 64KB even for undetected devices */
+        LOG_WARN("Could not detect device type, using 64KB buffer for experiment");
     }
     
     /* Reallocate buffers for detected chip */
