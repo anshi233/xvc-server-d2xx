@@ -13,7 +13,7 @@
 #define XVC_VERSION "xvcServer_v1.0"
 
 /* Default maximum vector size in bytes (TMS + TDI combined) */
-#define XVC_DEFAULT_MAX_VECTOR_SIZE 4096
+#define XVC_DEFAULT_MAX_VECTOR_SIZE 2048
 #define XVC_MAX_VECTOR_SIZE_LIMIT   262144  /* 256KB maximum */
 
 /* JTAG states */

@@ -288,14 +288,14 @@ int xvc_handle(xvc_context_t *ctx, uint32_t frequency)
 
                 /* Perform scan operation with chunking for large transfers
                  * FTDI chip buffer is limited (1KB for FT232H, 4KB for FT2232H)
-                 * Use 4KB chunks to ensure reliable operation with large XVC buffers
+                 * Use 1KB chunks to ensure reliable operation with all FTDI chips
                  */
                 if (ftdi_adapter_scan_chunked(ctx->ftdi,
                                                ctx->vector_buf,
                                                ctx->vector_buf + nr_bytes,
                                                ctx->result_buf,
                                                len,
-                                               4096) < 0) {
+                                               1024) < 0) {
                     LOG_ERROR("FTDI scan failed");
                     return -1;
                 }
