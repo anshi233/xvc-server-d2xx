@@ -63,7 +63,7 @@ void config_init(xvc_global_config_t *config)
         config->instances[i].latency_timer = DEFAULT_LATENCY;
         config->instances[i].async_mode = false;
         config->instances[i].jtag_mode = JTAG_MODE_MPSSE;  /* Default to fast MPSSE mode */
-        config->instances[i].max_vector_size = DEFAULT_MAX_VECTOR_SIZE;
+        config->instances[i].xvc_buffer_size = DEFAULT_XVC_BUFFER_SIZE;
         config->instances[i].whitelist_mode = WHITELIST_OFF;
         config->instances[i].enabled = false;
     }
@@ -211,8 +211,18 @@ int config_load(xvc_global_config_t *config, const char *path)
                         } else if (strcmp(setting, "jtag_mode") == 0) {
                             /* Only MPSSE mode is supported - bitbang mode removed */
                             inst->jtag_mode = JTAG_MODE_MPSSE;
-                        } else if (strcmp(setting, "vector_buffer_size") == 0) {
-                            inst->max_vector_size = atoi(value);
+                        } else if (strcmp(setting, "xvc_buffer_size") == 0) {
+                            long size = strtol(value, NULL, 0);
+                            if (size < MIN_XVC_BUFFER_SIZE) {
+                                LOG_WARN("xvc_buffer_size %ld too small, using minimum %d",
+                                         size, MIN_XVC_BUFFER_SIZE);
+                                size = MIN_XVC_BUFFER_SIZE;
+                            } else if (size > MAX_XVC_BUFFER_SIZE) {
+                                LOG_WARN("xvc_buffer_size %ld too large, using maximum %d",
+                                         size, MAX_XVC_BUFFER_SIZE);
+                                size = MAX_XVC_BUFFER_SIZE;
+                            }
+                            inst->xvc_buffer_size = (int)size;
                         }
                     }
                 }
@@ -310,6 +320,9 @@ int config_save(const xvc_global_config_t *config, const char *path)
             fprintf(fp, "%d:frequency = %u\n", inst->instance_id, inst->frequency);
             if (inst->latency_timer != DEFAULT_LATENCY) {
                 fprintf(fp, "%d:latency_timer = %d\n", inst->instance_id, inst->latency_timer);
+            }
+            if (inst->xvc_buffer_size != DEFAULT_XVC_BUFFER_SIZE) {
+                fprintf(fp, "%d:xvc_buffer_size = %d\n", inst->instance_id, inst->xvc_buffer_size);
             }
         }
     }

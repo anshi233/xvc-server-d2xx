@@ -63,7 +63,7 @@ instance_id_end = 32
 #   latency_timer     - FTDI latency timer in ms (default: 2, range: 1-255)
 #   async             - Enable async I/O (default: true)
 #   interface         - FTDI interface (default: 0)
-#   vector_buffer_size - Vector buffer size in bytes (default: 4096, max: 262144)
+#   xvc_buffer_size   - XVC max vector size in bytes (default: 2048, min: 64, max: 512MB)
 
 # Example: Set specific TCK frequency for instance 1
 1:frequency = 30000000
@@ -77,9 +77,9 @@ instance_id_end = 32
 # Example: Set interface index for instance 1
 1:interface = 0
 
-# Example: Set large vector buffer for high-throughput JTAG (up to 256KB)
-1:vector_buffer_size = 65536
-2:vector_buffer_size = 262144
+# Example: Set large XVC buffer for high-throughput JTAG (up to 512MB)
+1:xvc_buffer_size = 65536
+2:xvc_buffer_size = 262144
 
 [instance_aliases]
 # Human-readable aliases for instances
@@ -154,10 +154,10 @@ connection_timeout = 300
 #
 # Format: instance_id:setting=value
 
-# Example: Different buffer sizes per instance (up to 256KB supported)
-1:vector_buffer_size = 4096
-2:vector_buffer_size = 65536
-3:vector_buffer_size = 262144
+# Example: Different XVC buffer sizes per instance (up to 512MB supported)
+1:xvc_buffer_size = 4096
+2:xvc_buffer_size = 65536
+3:xvc_buffer_size = 262144
 
 # Example: Different latency timers per instance
 1:ftdi_latency_timer = 4
