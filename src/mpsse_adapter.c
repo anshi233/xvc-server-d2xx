@@ -208,7 +208,7 @@ mpsse_context_t* mpsse_adapter_create(void)
 
     /* Initial buffer allocation with large size for 64KB transfers */
     ctx->buffer.max_tx_buffer_bytes = 3 * 65536;
-    ctx->buffer.max_rx_buffer_bytes = 65536;
+    ctx->buffer.max_rx_buffer_bytes = 65536 * 2;  /* 128KB to avoid mid-build flushes */
 
     ctx->buffer.tx_buffer = malloc(ctx->buffer.max_tx_buffer_bytes);
     ctx->buffer.rx_buffer = malloc(ctx->buffer.max_rx_buffer_bytes);
@@ -352,19 +352,31 @@ static int mpsse_buffer_flush(mpsse_context_t *ctx)
         int bytes_read = 0;
         int timeout_us = 500000;  /* 500ms max timeout */
         int spin_count = 0;
-        const int max_spin = 1000;  /* OPTIMIZATION: Reduced from 10000 to prevent excessive spinning */
+        const int max_spin = 1000;
+        
+        /* Detailed timing instrumentation */
+        struct timeval t_start, t_first_data, t_complete;
+        long long first_data_us = -1, total_read_us = 0;
+        int queue_checks = 0;
+        gettimeofday(&t_start, NULL);
         
         LOG_TRACE("Reading %d bytes with timeout %dus", b->rx_num_bytes, timeout_us);
 
         while (bytes_read < b->rx_num_bytes && timeout_us > 0) {
             DWORD rxQueue = 0;
             ftStatus = FT_GetQueueStatus(ctx->ft_handle, &rxQueue);
+            queue_checks++;
             if (ftStatus != FT_OK) {
                 LOG_ERROR("FT_GetQueueStatus failed: %d", (int)ftStatus);
                 return -1;
             }
             
             if (rxQueue > 0) {
+                if (first_data_us < 0) {
+                    gettimeofday(&t_first_data, NULL);
+                    first_data_us = (t_first_data.tv_sec - t_start.tv_sec) * 1000000LL +
+                                    (t_first_data.tv_usec - t_start.tv_usec);
+                }
                 DWORD toRead = min(rxQueue, (DWORD)(b->rx_num_bytes - bytes_read));
                 DWORD actualRead = 0;
                 ftStatus = FT_Read(ctx->ft_handle, b->rx_buffer + bytes_read, toRead, &actualRead);
@@ -378,11 +390,18 @@ static int mpsse_buffer_flush(mpsse_context_t *ctx)
                 if (spin_count < max_spin) {
                     spin_count++;
                 } else {
-                    usleep(10);  /* OPTIMIZATION: Reduced from 100us to 10us for lower latency */
+                    usleep(10);
                     timeout_us -= 10;
                 }
             }
         }
+        
+        gettimeofday(&t_complete, NULL);
+        total_read_us = (t_complete.tv_sec - t_start.tv_sec) * 1000000LL +
+                        (t_complete.tv_usec - t_start.tv_usec);
+        
+        LOG_TRACE("RX timing: first_data=%lldus total=%lldus checks=%d bytes=%d",
+                  first_data_us, total_read_us, queue_checks, bytes_read);
 
         if (bytes_read != b->rx_num_bytes) {
             LOG_ERROR("Only read %d of %d bytes after timeout", bytes_read, b->rx_num_bytes);
@@ -444,8 +463,9 @@ static int mpsse_buffer_ensure_can_append(mpsse_context_t *ctx, int tx_bytes, in
 {
     struct mpsse_buffer *b = &ctx->buffer;
     
-    int tx_safety_threshold = (b->max_tx_buffer_bytes * 8) / 10;
-    int rx_safety_threshold = (b->max_rx_buffer_bytes * 8) / 10;
+    /* Use 95% threshold to avoid premature flushes during large transfers */
+    int tx_safety_threshold = (b->max_tx_buffer_bytes * 95) / 100;
+    int rx_safety_threshold = (b->max_rx_buffer_bytes * 95) / 100;
     
     if (b->tx_num_bytes + tx_bytes > b->max_tx_buffer_bytes ||
         b->rx_num_bytes + rx_bytes > b->max_rx_buffer_bytes ||
@@ -471,13 +491,15 @@ static int mpsse_buffer_append(mpsse_context_t *ctx, const uint8_t *tx_data, int
 {
     struct mpsse_buffer *b = &ctx->buffer;
     
-    int flush_threshold = 61440;  /* Experiment: 60KB threshold for 64KB transfers */
+    /* Use 90% of buffer as threshold to avoid premature flushes */
+    int tx_threshold = (b->max_tx_buffer_bytes * 9) / 10;
+    int rx_threshold = (b->max_rx_buffer_bytes * 9) / 10;
     
     bool would_overflow = (b->tx_num_bytes + tx_bytes > b->max_tx_buffer_bytes ||
                            b->rx_num_bytes + rx_bytes > b->max_rx_buffer_bytes);
     
-    bool at_threshold = (b->tx_num_bytes >= flush_threshold ||
-                         b->rx_num_bytes >= flush_threshold);
+    bool at_threshold = (b->tx_num_bytes >= tx_threshold ||
+                         b->rx_num_bytes >= rx_threshold);
     
     if (would_overflow || at_threshold) {
         if (b->rx_num_bytes > 0) {
@@ -835,18 +857,18 @@ int mpsse_adapter_open(mpsse_context_t *ctx, int vendor, int product,
         FT_Read(ctx->ft_handle, junk, min(rxBytes, sizeof(junk)), &bytesRead);
     }
     
-    /* MPSSE setup commands */
+    /* MPSSE setup commands - ORDER MATTERS! */
     uint8_t setup_cmds[] = {
         /* Disable loopback */
         OP_LOOPBACK_OFF,
         
-        /* Set clock divisor for default ~1MHz (60MHz / (2 * 29) = ~1.03MHz) */
+        /* Disable divide-by-5 FIRST to get 60MHz base clock */
+        OP_DISABLE_CLK_DIVIDE_BY_5,
+        
+        /* Set clock divisor AFTER switching to 60MHz mode */
         OP_SET_TCK_DIVISOR,
         29 & 0xFF,
         (29 >> 8) & 0xFF,
-        
-        /* Disable divide-by-5 for 60MHz clock on FT2232H/FT232H */
-        OP_DISABLE_CLK_DIVIDE_BY_5,
         
         /* Set initial pin states: TCK=0, TDI=0, TMS=1 (high for RESET state) */
         OP_SET_DBUS_LOBYTE,
@@ -893,9 +915,9 @@ int mpsse_adapter_open(mpsse_context_t *ctx, int vendor, int product,
         LOG_WARN("Could not detect device type, using 64KB buffer for experiment");
     }
     
-    /* Reallocate buffers for detected chip */
+    /* Reallocate buffers for detected chip - keep large RX to avoid flushes */
     ctx->buffer.max_tx_buffer_bytes = 3 * ctx->chip_buffer_size;
-    ctx->buffer.max_rx_buffer_bytes = ctx->chip_buffer_size;
+    ctx->buffer.max_rx_buffer_bytes = ctx->chip_buffer_size * 2;  /* 2x to prevent mid-build flushes */
     
     free(ctx->buffer.tx_buffer);
     free(ctx->buffer.rx_buffer);
@@ -954,10 +976,11 @@ int mpsse_adapter_set_frequency(mpsse_context_t *ctx, uint32_t frequency_hz)
     unsigned int actual = 60000000 / (2 * divisor);
     
     uint8_t cmd[] = {
+        /* Disable divide-by-5 FIRST, then set divisor for 60MHz mode */
+        OP_DISABLE_CLK_DIVIDE_BY_5,
         OP_SET_TCK_DIVISOR,
         divisor & 0xFF,
         (divisor >> 8) & 0xFF,
-        OP_DISABLE_CLK_DIVIDE_BY_5,
     };
     
     if (mpsse_buffer_append(ctx, cmd, sizeof(cmd), NULL, NULL, 0) < 0) {
@@ -980,6 +1003,10 @@ int mpsse_adapter_scan(mpsse_context_t *ctx, const uint8_t *tms, const uint8_t *
                         uint8_t *tdo, int bits)
 {
     if (!ctx || !ctx->is_open || !tms || !tdi || !tdo || bits <= 0) return -1;
+    
+    struct timeval t_scan_start, t_build_done, t_flush_done;
+    gettimeofday(&t_scan_start, NULL);
+    int flushes_before = ctx->total_flushes;
     
     LOG_TRACE("MPSSE scan: bits=%d, bytes=%d", bits, (bits + 7) / 8);
     
@@ -1028,11 +1055,23 @@ int mpsse_adapter_scan(mpsse_context_t *ctx, const uint8_t *tms, const uint8_t *
         }
     }
     
+    gettimeofday(&t_build_done, NULL);
+    long long build_us = (t_build_done.tv_sec - t_scan_start.tv_sec) * 1000000LL +
+                          (t_build_done.tv_usec - t_scan_start.tv_usec);
+    
     /* Flush all buffered commands */
     if (mpsse_buffer_flush(ctx) < 0) {
         LOG_ERROR("MPSSE flush failed");
         return -1;
     }
+    
+    gettimeofday(&t_flush_done, NULL);
+    long long flush_us = (t_flush_done.tv_sec - t_build_done.tv_sec) * 1000000LL +
+                          (t_flush_done.tv_usec - t_build_done.tv_usec);
+    
+    int flushes_during_build = ctx->total_flushes - flushes_before;
+    LOG_TRACE("SCAN TIMING: build=%lldus flush=%lldus total=%lldus bits=%d flushes=%d", 
+              build_us, flush_us, build_us + flush_us, bits, flushes_during_build);
     
     ctx->current_bit_offset += bits;
     
