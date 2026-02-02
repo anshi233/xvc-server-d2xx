@@ -859,9 +859,10 @@ int mpsse_adapter_open(mpsse_context_t *ctx, int vendor, int product,
         /* Disable loopback */
         OP_LOOPBACK_OFF,
         
-        /* Set clock divisor for default 10MHz (60MHz / (2 * (2 + 1)) = 10MHz) */
+        /* Set clock divisor for default ~1MHz (60MHz / (2 * 29) = ~1.03MHz) */
         OP_SET_TCK_DIVISOR,
-        0x02, 0x00,  /* divisor = 2 */
+        29 & 0xFF,
+        (29 >> 8) & 0xFF,
         
         /* Disable divide-by-5 for 60MHz clock on FT2232H/FT232H */
         OP_DISABLE_CLK_DIVIDE_BY_5,
@@ -965,15 +966,16 @@ int mpsse_adapter_set_frequency(mpsse_context_t *ctx, uint32_t frequency_hz)
     if (!ctx || !ctx->is_open) return -1;
     
     if (frequency_hz > MPSSE_MAX_FREQUENCY) frequency_hz = MPSSE_MAX_FREQUENCY;
-    if (frequency_hz < MPSSE_MIN_FREQUENCY) frequency_hz = MPSSE_MIN_FREQUENCY;
+    if (frequency_hz < 1) frequency_hz = 1;
     
     /* Calculate divisor for 60MHz base clock (disable divide-by-5) */
-    /* TCK = 60MHz / (2 * (1 + divisor)) */
-    /* divisor = (60MHz / (2 * TCK)) - 1 */
-    unsigned int divisor = (60000000 / (2 * frequency_hz)) - 1;
+    /* TCK = 60MHz / (2 * divisor) where divisor >= 1 */
+    /* Using ceiling division to ensure we don't exceed requested frequency */
+    unsigned int divisor = ((60000000 / 2) + frequency_hz - 1) / frequency_hz;
     if (divisor > 0xFFFF) divisor = 0xFFFF;
+    if (divisor < 1) divisor = 1;
     
-    unsigned int actual = 60000000 / (2 * (divisor + 1));
+    unsigned int actual = 60000000 / (2 * divisor);
     
     uint8_t cmd[] = {
         OP_SET_TCK_DIVISOR,
