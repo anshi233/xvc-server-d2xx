@@ -168,6 +168,77 @@ int ftdi_adapter_scan(ftdi_context_t *ctx,
     return mpsse_adapter_scan(ctx->mpsse, tms, tdi, tdo, bits);
 }
 
+/* Maximum chunk size for FTDI transfers (limited by FTDI chip buffer) */
+#define FTDI_MAX_WRITESIZE 4096
+
+int ftdi_adapter_scan_chunked(ftdi_context_t *ctx,
+                               const uint8_t *tms,
+                               const uint8_t *tdi,
+                               uint8_t *tdo,
+                               int bits,
+                               int chunk_bytes)
+{
+    if (!ctx || !ctx->is_open || !tms || !tdi || !tdo || bits <= 0) return -1;
+
+    /* Use default chunk size if not specified */
+    if (chunk_bytes <= 0) {
+        chunk_bytes = FTDI_MAX_WRITESIZE;
+    }
+
+    /* Calculate total bytes needed */
+    int total_bytes = (bits + 7) / 8;
+
+    /* If the transfer fits in one chunk, use regular scan */
+    if (total_bytes <= chunk_bytes) {
+        return ftdi_adapter_scan(ctx, tms, tdi, tdo, bits);
+    }
+
+    /* For large transfers, split into chunks */
+    LOG_DBG("Chunked scan: %d bits (%d bytes) in chunks of %d bytes",
+            bits, total_bytes, chunk_bytes);
+
+    /* Clear output buffer */
+    memset(tdo, 0, total_bytes);
+
+    /* Process in chunks of bits (each chunk must be byte-aligned for simplicity) */
+    int bits_processed = 0;
+    int chunk_bits = chunk_bytes * 8;
+
+    while (bits_processed < bits) {
+        int current_chunk_bits = chunk_bits;
+        if (bits_processed + current_chunk_bits > bits) {
+            current_chunk_bits = bits - bits_processed;
+        }
+
+        /* Calculate byte offsets */
+        int byte_offset = bits_processed / 8;
+        int current_chunk_bytes = (current_chunk_bits + 7) / 8;
+
+        /* Temporary buffer for this chunk's result */
+        uint8_t *chunk_tdo = malloc(current_chunk_bytes);
+        if (!chunk_tdo) {
+            LOG_ERROR("Failed to allocate chunk buffer");
+            return -1;
+        }
+        memset(chunk_tdo, 0, current_chunk_bytes);
+
+        int ret = ftdi_adapter_scan(ctx, tms + byte_offset, tdi + byte_offset, chunk_tdo, current_chunk_bits);
+        if (ret < 0) {
+            LOG_ERROR("Chunked scan failed at bit %d", bits_processed);
+            free(chunk_tdo);
+            return -1;
+        }
+
+        /* Copy result to output buffer */
+        memcpy(tdo + byte_offset, chunk_tdo, current_chunk_bytes);
+        free(chunk_tdo);
+
+        bits_processed += current_chunk_bits;
+    }
+
+    return 0;
+}
+
 const char* ftdi_adapter_error(const ftdi_context_t *ctx)
 {
     if (!ctx) return "NULL context";

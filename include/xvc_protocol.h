@@ -61,7 +61,7 @@ typedef struct {
     
     /* Buffers - dynamically allocated based on max_vector_size */
     uint8_t cmd_buf[16];
-    uint8_t *vector_buf;    /* Allocated: max_vector_size bytes */
+    uint8_t *vector_buf;    /* Allocated: max_vector_size * 2 bytes (TMS + TDI) */
     uint8_t *result_buf;    /* Allocated: max_vector_size bytes */
     
     /* Statistics */
