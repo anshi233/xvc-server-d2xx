@@ -51,7 +51,7 @@
 #define OP_CLK_TMS_NO_READ         0x4B   /* Clock TMS out, no read */
 #define OP_CLK_TMS_READ            0x6B   /* Clock TMS out, read TDO */
 
-#define MPSSE_DEFAULT_LATENCY   1
+/* Latency timer removed - not needed for high-speed bulk transfers */
 #define MPSSE_DEFAULT_CLOCK    30000000
 #define MPSSE_MAX_FREQUENCY    30000000
 #define MPSSE_MIN_FREQUENCY       457
@@ -307,16 +307,8 @@ static int mpsse_buffer_flush(mpsse_context_t *ctx)
     DWORD bytesWritten = 0;
     
     if (b->tx_num_bytes > 0) {
-        struct timeval now;
-        gettimeofday(&now, NULL);
-        
-        long time_since_last = 0;
-        if (ctx->total_flushes > 0) {
-            time_since_last = time_diff_ms(&ctx->last_flush_time, &now);
-        }
-        
-        LOG_TRACE("Flushing TX buffer: %d bytes (time since last: %ldms)", 
-                  b->tx_num_bytes, time_since_last);
+        /* OPTIMIZATION: Only compute timing stats at TRACE level */
+        LOG_TRACE("Flushing TX buffer: %d bytes", b->tx_num_bytes);
         
         if (ctx->dump_file) {
             char tms_tdi_buf[2048];
@@ -354,14 +346,13 @@ static int mpsse_buffer_flush(mpsse_context_t *ctx)
         }
         LOG_TRACE("TX flush successful: %lu bytes", bytesWritten);
         b->tx_num_bytes = 0;
-        ctx->last_flush_time = now;
     }
     
     if (b->rx_num_bytes > 0) {
         int bytes_read = 0;
         int timeout_us = 500000;  /* 500ms max timeout */
         int spin_count = 0;
-        const int max_spin = 10000;
+        const int max_spin = 1000;  /* OPTIMIZATION: Reduced from 10000 to prevent excessive spinning */
         
         LOG_TRACE("Reading %d bytes with timeout %dus", b->rx_num_bytes, timeout_us);
 
@@ -387,8 +378,8 @@ static int mpsse_buffer_flush(mpsse_context_t *ctx)
                 if (spin_count < max_spin) {
                     spin_count++;
                 } else {
-                    usleep(100);
-                    timeout_us -= 100;
+                    usleep(10);  /* OPTIMIZATION: Reduced from 100us to 10us for lower latency */
+                    timeout_us -= 10;
                 }
             }
         }
@@ -815,13 +806,7 @@ int mpsse_adapter_open(mpsse_context_t *ctx, int vendor, int product,
         LOG_WARN("FT_SetTimeouts failed: %d", (int)ftStatus);
     }
     
-    /* Set latency timer - low latency for responsive JTAG */
-    ftStatus = FT_SetLatencyTimer(ctx->ft_handle, MPSSE_DEFAULT_LATENCY);
-    if (ftStatus != FT_OK) {
-        LOG_WARN("FT_SetLatencyTimer failed: %d", (int)ftStatus);
-    } else {
-        LOG_DBG("Latency timer set to %dms", MPSSE_DEFAULT_LATENCY);
-    }
+    /* Latency timer removed - relying on bulk USB transfers for performance */
     
     /* Reset bit mode to default */
     ftStatus = FT_SetBitMode(ctx->ft_handle, 0x00, FT_BITMODE_RESET);

@@ -260,7 +260,6 @@ int ftdi_adapter_set_latency(ftdi_context_t *ctx, int latency_ms)
     (void)ctx;
     (void)latency_ms;
     
-    /* Latency is handled internally by D2XX driver in MPSSE mode */
-    LOG_DBG("Latency timer set to %dms (handled by D2XX)", latency_ms);
+    /* Latency timer disabled - using bulk USB transfers for performance */
     return 0;
 }

@@ -280,11 +280,25 @@ int xvc_handle(xvc_context_t *ctx, uint32_t frequency)
             }
 
             if (!skip) {
-                /* Update JTAG state machine */
-                for (int i = 0; i < len; i++) {
-                    int tms = !!(ctx->vector_buf[i / 8] & (1 << (i & 7)));
-                    ctx->jtag_state = jtag_step(ctx->jtag_state, tms);
+                /* Update JTAG state machine - optimized byte-wise processing */
+                int byte_idx = 0;
+                int bit_idx = 0;
+                jtag_state_t state = ctx->jtag_state;
+                while (len - bit_idx >= 8) {
+                    uint8_t tms_byte = ctx->vector_buf[byte_idx++];
+                    for (int j = 0; j < 8; j++) {
+                        state = jtag_next_state[state][tms_byte & 1];
+                        tms_byte >>= 1;
+                    }
+                    bit_idx += 8;
                 }
+                /* Handle remaining bits */
+                uint8_t tms_byte = ctx->vector_buf[byte_idx];
+                for (int i = bit_idx; i < len; i++) {
+                    state = jtag_next_state[state][tms_byte & 1];
+                    tms_byte >>= 1;
+                }
+                ctx->jtag_state = state;
 
                 /* Perform scan operation WITHOUT chunking
                  * EXPERIMENT: Send all data at once to FT_Write
