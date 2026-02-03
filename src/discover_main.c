@@ -137,6 +137,7 @@ static int output_ini(const device_manager_t *mgr, FILE *fp)
     fprintf(fp, "# Per-instance settings (format: id:setting = value)\n");
     for (int i = 0; i < config.instance_count; i++) {
         fprintf(fp, "%d:frequency = %u\n", i + 1, DEFAULT_FREQUENCY);
+        fprintf(fp, "%d:xvc_buffer_size = %d\n", i + 1, 131088);
     }
     fprintf(fp, "\n");
     
