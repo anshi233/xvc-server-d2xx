@@ -972,13 +972,15 @@ int mpsse_adapter_set_frequency(mpsse_context_t *ctx, uint32_t frequency_hz)
     if (frequency_hz < 1) frequency_hz = 1;
     
     /* Calculate divisor for 60MHz base clock (disable divide-by-5) */
-    /* TCK = 60MHz / (2 * divisor) where divisor >= 1 */
-    /* Using ceiling division to ensure we don't exceed requested frequency */
-    unsigned int divisor = ((60000000 / 2) + frequency_hz - 1) / frequency_hz;
+    /* FTDI MPSSE formula: TCK = 60MHz / ((1 + Divisor) * 2) */
+    /* So: Divisor = (60MHz / (2 * TCK)) - 1 */
+    /* For 30MHz: Divisor = (60/60) - 1 = 0 */
+    /* For 15MHz: Divisor = (60/30) - 1 = 1 */
+    unsigned int divisor = (60000000 / (2 * frequency_hz));
+    if (divisor > 0) divisor--;  /* Subtract 1 per FTDI formula */
     if (divisor > 0xFFFF) divisor = 0xFFFF;
-    if (divisor < 1) divisor = 1;
     
-    unsigned int actual = 60000000 / (2 * divisor);
+    unsigned int actual = 60000000 / ((1 + divisor) * 2);
     
     uint8_t cmd[] = {
         /* Disable divide-by-5 FIRST, then set divisor for 60MHz mode */
