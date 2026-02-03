@@ -47,9 +47,14 @@
 #define OP_CLK_DATA_BYTES_OUT_NEG_IN_POS 0x39  /* Write on -ve, read on +ve */
 #define OP_CLK_DATA_BITS_OUT_NEG_IN_POS  0x3B  /* Write bits on -ve, read on +ve */
 
+/* Vivado-style: Both write and read on negative edge (for 30MHz stability) */
+#define OP_CLK_DATA_BYTES_OUT_NEG_IN_NEG 0x3D  /* Write on -ve, read on -ve */
+#define OP_CLK_DATA_BITS_OUT_NEG_IN_NEG  0x3F  /* Write bits on -ve, read on -ve */
+
 /* TMS commands */
 #define OP_CLK_TMS_NO_READ         0x4B   /* Clock TMS out, no read */
-#define OP_CLK_TMS_READ            0x6B   /* Clock TMS out, read TDO */
+#define OP_CLK_TMS_READ            0x6B   /* Clock TMS out, read TDO (+ve edge) */
+#define OP_CLK_TMS_READ_NEG        0x6F   /* Clock TMS out, read TDO (-ve edge) */
 
 /* Latency timer removed - not needed for high-speed bulk transfers */
 #define MPSSE_DEFAULT_CLOCK    30000000
@@ -642,7 +647,7 @@ static int append_tdi_shift(mpsse_context_t *ctx, const uint8_t *tdi, uint8_t *t
         /* Leading bits (not byte-aligned) */
         if (cur_idx == from_bit_idx && num_leading_bits > 0) {
             uint8_t cmd[] = {
-                OP_CLK_DATA_BITS_OUT_NEG_IN_POS,
+                OP_CLK_DATA_BITS_OUT_NEG_IN_NEG,  /* Vivado-style: both on -ve edge */
                 num_leading_bits - 1,
                 tdi[from_bit_idx / 8] >> (from_bit_idx % 8),
             };
@@ -668,7 +673,7 @@ static int append_tdi_shift(mpsse_context_t *ctx, const uint8_t *tdi, uint8_t *t
             const int inner_octets_to_send = min((inner_end_idx - cur_idx) / 8, ctx->chip_buffer_size);
             
             uint8_t cmd[] = {
-                OP_CLK_DATA_BYTES_OUT_NEG_IN_POS,
+                OP_CLK_DATA_BYTES_OUT_NEG_IN_NEG,  /* Vivado-style: both on -ve edge */
                 ((inner_octets_to_send - 1) >> 0) & 0xff,
                 ((inner_octets_to_send - 1) >> 8) & 0xff,
             };
@@ -698,7 +703,7 @@ static int append_tdi_shift(mpsse_context_t *ctx, const uint8_t *tdi, uint8_t *t
         /* Trailing bits */
         if (num_trailing_bits > 0 && cur_idx < last_bit_idx) {
             uint8_t cmd[] = {
-                OP_CLK_DATA_BITS_OUT_NEG_IN_POS,
+                OP_CLK_DATA_BITS_OUT_NEG_IN_NEG,  /* Vivado-style: both on -ve edge */
                 num_trailing_bits - 1,
                 tdi[inner_end_idx / 8],
             };
@@ -726,7 +731,7 @@ static int append_tdi_shift(mpsse_context_t *ctx, const uint8_t *tdi, uint8_t *t
             
             /* Use TMS command for last bit - allows simultaneous TMS control */
             uint8_t cmd[] = {
-                OP_CLK_TMS_READ,
+                OP_CLK_TMS_READ_NEG,  /* Vivado-style: read on -ve edge */
                 0x00,  /* 1 bit */
                 (last_tdi_bit << 7) | (last_tms_bit << 1) | last_tms_bit,
             };
