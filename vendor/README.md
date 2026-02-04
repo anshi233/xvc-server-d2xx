@@ -3,6 +3,7 @@
 This directory contains all external libraries required by the XVC server.
 
 ## Philosophy
+
 All external dependencies are **bundled locally** in this `vendor/` directory. This ensures:
 
 - **Reproducible builds**: No dependency on system library versions
@@ -22,151 +23,96 @@ All other libraries are built locally from source.
 
 ```
 vendor/
-├── README.md                 # This file
-├── libftdi1/              # FTDI library for HS2 communication
-│   ├── src/                # Source code
-│   ├── build/              # Build output (generated)
-│   └── Makefile            # Build configuration
-└── libusb/                 # USB library for device discovery
-    ├── src/                # Source code
-    ├── build/              # Build output (generated)
-    └── Makefile            # Build configuration
+├── README.md               # This file
+├── d2xx/                   # FTDI D2XX driver for HS2 communication
+│   ├── x86_64/             # x86_64 architecture
+│   │   ├── build/          # Static library
+│   │   └── libusb/         # libusb bundled with D2XX
+│   └── arm64/              # ARM64 architecture
+│       ├── build/          # Static library
+│       └── libusb/         # libusb bundled with D2XX
+└── (libusb is bundled with D2XX)
 ```
 
-## libftdi1
+## D2XX Driver
 
-**Purpose**: Library for communicating with FTDI USB devices (Digilent HS2)
+**Purpose**: FTDI's proprietary driver for communicating with FTDI USB devices (Digilent HS2)
 
-**Version**: 1.5 (or latest stable release)
+**Version**: See `vendor/d2xx/x86_64/ftd2xx.h` or `vendor/d2xx/arm64/ftd2xx.h` for version
 
-**Source**: https://www.intra2net.com/en/developer/libftdi/download-libftdi
+**Source**: https://ftdichip.com/drivers/d2xx-drivers/
 
 **Used by**: `xvc-server` (for HS2 communication)
 
-**Build Instructions**:
+**Note**: The D2XX driver requires exclusive access to the FTDI device. The `ftdi_sio` kernel module must be removed before using:
 ```bash
-cd vendor/libftdi1
-mkdir build
-cd build
-cmake .. -DCMAKE_INSTALL_PREFIX=$(PWD)/..
-make
+sudo rmmod ftdi_sio
+sudo rmmod usbserial
 ```
 
-**API Used**:
-- `ftdi_init()` - Initialize FTDI context
-- `ftdi_usb_open()` - Open FTDI device
-- `ftdi_set_bitmode()` - Set operating mode
-- `ftdi_read_data()` - Read data from device
-- `ftdi_write_data()` - Write data to device
-- `ftdi_usb_close()` - Close device
-
-## libusb
-
-**Purpose**: Low-level USB library for device discovery
-
-**Version**: 1.0.26 (or latest stable release)
-
-**Source**: https://github.com/libusb/libusb
-
-**Used by**: `xvc-discover` (for device scanning)
-
-**Build Instructions**:
-```bash
-cd vendor/libusb
-mkdir build
-cd build
-cmake .. -DCMAKE_INSTALL_PREFIX=$(PWD)/..
-make
-```
-
-**API Used**:
-- `libusb_init()` - Initialize library
-- `libusb_get_device_list()` - Get list of USB devices
-- `libusb_open_device_with_vid_pid()` - Open device by VID/PID
-- `libusb_get_device_descriptor()` - Get device information
-- `libusb_free_device_list()` - Free device list
+**Key Features**:
+- Direct hardware access without kernel driver
+- Better performance for high-speed JTAG
+- Works in userspace
+- Bundled with compatible libusb
 
 ## Building Vendor Libraries
 
-The main Makefile automatically builds vendor libraries:
+The D2XX driver is provided as pre-built static libraries. No compilation needed:
 
 ```bash
-# Build only vendor libraries
-make vendor-lib
-
-# Clean only vendor libraries
-make vendor-clean
+# The D2XX libraries are already included in vendor/d2xx/
+# Just build the main project:
+make
 ```
-
-Vendor libraries are also built automatically when running `make all`.
 
 ## Cross-Compilation
 
-Vendor libraries can be cross-compiled for ARM64:
+D2XX libraries are available for both x86_64 and ARM64:
 
 ```bash
 # Build for ARM64
-make vendor-lib ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
+make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
 
-# The vendor library Makefiles will use the cross-compiler
+# The correct D2XX library will be selected automatically
 ```
 
-## Version Pinning
+## Version Information
 
-To ensure reproducible builds, library versions are pinned:
-
-**libftdi1**: Version 1.5
-**libusb**: Version 1.0.26
-
-To update a library:
-1. Download new version
-2. Extract to `vendor/<library>/`
-3. Update version in this README
-4. Run `make vendor-clean && make vendor-lib`
-
-## Security Considerations
-
-### Trust
-Vendor libraries are trusted because:
-- They are from official sources
-- Version-controlled in repository
-- Built locally from source
-- No binary downloads from untrusted sources
-
-### Verification
-To verify library integrity:
-
-```bash
-# Check git commits
-cd vendor/libftdi1
-git log --oneline -10
-
-# Check file hashes
-sha256sum vendor/libftdi1/src/ftdi.c
-```
+D2XX driver versions are documented in the release notes:
+- **x86_64**: `vendor/d2xx/x86_64/release-notes.txt`
+- **ARM64**: `vendor/d2xx/arm64/release-notes.txt`
 
 ## Troubleshooting
 
-### Build Failures
+### Device Not Detected
 
-**libftdi1 build fails:**
+**Check if ftdi_sio is blocking D2XX access:**
 ```bash
-# Check for required dependencies
-sudo apt install build-essential cmake libusb-dev
+# Check if kernel module is loaded
+lsmod | grep ftdi_sio
 
-# Clean and rebuild
-make vendor-clean
-make vendor-lib
+# Remove if present
+sudo rmmod ftdi_sio
+sudo rmmod usbserial
+
+# Verify device is accessible
+sudo xvc-discover
 ```
 
-**libusb build fails:**
+**Make persistent across reboots:**
 ```bash
-# Check for required dependencies
-sudo apt install build-essential cmake
+echo "blacklist ftdi_sio" | sudo tee /etc/modprobe.d/blacklist-ftdi.conf
+echo "blacklist usbserial" | sudo tee -a /etc/modprobe.d/blacklist-ftdi.conf
+```
 
-# Clean and rebuild
-make vendor-clean
-make vendor-lib
+### Architecture Mismatch
+
+**Check library architecture:**
+```bash
+# Should show: ELF 64-bit LSB shared object
+file vendor/d2xx/x86_64/build/libftd2xx.a
+file vendor/d2xx/arm64/build/libftd2xx.a
 ```
 
 ### Cross-Compilation Issues
@@ -180,43 +126,23 @@ sudo apt install gcc-aarch64-linux-gnu
 aarch64-linux-gnu-gcc --version
 ```
 
-**Library architecture mismatch:**
-```bash
-# Check library architecture
-file vendor/libftdi1/build/libftdi.so.1
+## Security Considerations
 
-# Should show: ELF 64-bit LSB shared object, ARM aarch64
-```
-
-## Maintenance
-
-### Updating Libraries
-
-1. **Check upstream**: Visit library websites for updates
-2. **Download source**: Get new version tarball
-3. **Replace files**: Extract to `vendor/<library>/`
-4. **Test build**: Run `make vendor-clean && make vendor-lib`
-5. **Test functionality**: Build and test xvc-server
-6. **Commit changes**: Update repository with new version
-
-### Removing Libraries
-
-To remove a vendor library:
-```bash
-rm -rf vendor/<library-name>
-# Then remove references from main Makefile
-```
+### Trust
+Vendor libraries are trusted because:
+- They are from official FTDI source
+- Version-controlled in repository
+- No binary downloads from untrusted sources
 
 ## References
 
-- **libftdi1**: https://www.intra2net.com/en/developer/libftdi
-- **libusb**: https://libusb.info/
+- **D2XX Programmer's Guide**: https://ftdichip.com/document/programming-guides/
 - **FTDI Chip Documentation**: https://www.ftdichip.com/
 - **Digilent HS2**: https://digilent.com/reference/test-and-measurement/jtag-hs2/start
 
 ## License
 
-- **libftdi1**: LGPL v2.1
-- **libusb**: LGPL v2.1
+- **D2XX Driver**: Proprietary (FTDI), free to use with FTDI hardware
+- **Bundled libusb**: LGPL v2.1
 
-Both libraries are compatible with our project's open-source requirements.
+Both are compatible with our project's requirements.

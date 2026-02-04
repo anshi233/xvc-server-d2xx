@@ -186,19 +186,23 @@ BUS:001-002 = 3
 
 ### Per-Instance Network Settings
 
-Each instance has independent network configuration:
+Each instance has independent network configuration with optimized TCP settings:
 
 ```ini
 [network_per_instance]
 1:listen_ip = 0.0.0.0
-1:max_connections = 4
-1:tcp_nodelay = true
-1:tcp_keepalive = true
+1:max_connections = 1          # Single connection per instance
+1:tcp_nodelay = true           # Disable Nagle's algorithm
+1:tcp_quickack = true          # Disable delayed ACKs (Linux)
+1:tcp_fastopen = true          # Fast connection setup (Linux)
+1:socket_buffer_size = 262144  # 256KB buffers
 
 2:listen_ip = 0.0.0.0
-2:max_connections = 4
+2:max_connections = 1
 2:tcp_nodelay = true
-2:tcp_keepalive = true
+2:tcp_quickack = true
+2:tcp_fastopen = true
+2:socket_buffer_size = 262144
 ```
 
 ### IP Whitelist Per Instance
@@ -275,16 +279,24 @@ Total for 32 instances:
 1. Client connects to instance_port
 2. Instance accepts connection
 3. IP whitelist check (if enabled)
-4. Client sends 'getinfo:' command
-5. Instance responds with version info
-6. Client sends 'settck:' command
-7. Instance configures FTDI device
-8. Client sends 'shift:' commands
-9. Instance processes XVC commands
-10. Instance responds with TDO data
-11. Repeat steps 8-10
-12. Client disconnects
+4. Check if XVC session already active (reject if so)
+5. Client sends 'getinfo:' command
+6. Instance responds with version info
+7. Client sends 'settck:' command
+8. Instance configures FTDI device
+9. Client sends 'shift:' commands
+10. Instance processes XVC commands
+11. Instance responds with TDO data
+12. Repeat steps 9-11
+13. Client disconnects, session cleared
 ```
+
+**Single Connection Policy:**
+Each instance maintains only one active XVC session. If a client attempts to connect while another session is active:
+- The new connection is immediately rejected
+- A warning is logged with the client's IP address
+- The active session continues uninterrupted
+- The rejected client must retry after the active session ends
 
 ### Device Assignment Flow
 
@@ -423,10 +435,32 @@ Resource Scaling:
 
 Recommendations:
   - Monitor instance health
-  - Set appropriate max_connections per instance
+  - Each instance allows exactly 1 active XVC session
   - Use IP whitelisting to limit access
-  - Implement connection pooling
+  - Multiple Vivado clients should connect to different instances
 ```
+
+### TCP Latency Optimizations
+
+For high-latency networks (e.g., 100ms+), the server implements several optimizations:
+
+| Socket Option | Purpose | When Applied |
+|---------------|---------|--------------|
+| `TCP_QUICKACK` | Disable 40ms delayed ACK timer | Connection accept + after every read |
+| `SO_RCVBUF/SO_SNDBUF` | 256KB buffers for high BDP | Connection accept |
+| `TCP_FASTOPEN` | Reduce connection setup by 1 RTT | Listen socket setup |
+| `TCP_NODELAY` | Disable Nagle's algorithm | Connection accept |
+
+**TCP_QUICKACK Behavior:**
+- Linux-only feature (guarded by `#ifdef TCP_QUICKACK`)
+- Not persistent - resets after each ACK
+- Re-applied after every socket read operation
+- Critical for XVC protocol performance on WAN links
+
+**Buffer Sizing:**
+- Default: 256KB for both send and receive buffers
+- Accommodates high bandwidth-delay product networks
+- Prevents stalls from buffer exhaustion
 
 ### USB Bandwidth Management
 

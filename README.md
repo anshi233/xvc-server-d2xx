@@ -15,6 +15,8 @@ The system consists of two separate programs:
 - **Multi-Instance Architecture**: Each HS2 device gets its own XVC server instance
 - **Dedicated TCP Ports**: Each instance listens on a unique port (2542 + instance_id - 1)
 - **Process Isolation**: Faults in one instance don't affect others
+- **Single Connection Per Instance**: Only one active XVC session per instance to prevent conflicts
+- **TCP Latency Optimizations**: TCP_QUICKACK, large buffers, TCP Fast Open for high-latency networks
 - **Support up to 32 simultaneous instances**
 - Device identification via USB serial, port location, or custom ID
 - Per-instance IP whitelisting (strict/permissive/off modes)
@@ -56,18 +58,21 @@ The system consists of two separate programs:
 ### External Libraries
 **All external libraries are bundled locally** in `vendor/` directory. No system library installations required.
 
-**Vendor Libraries:**
-- `libftdi1` (version 1.5): FTDI library for HS2 communication
-- `libusb` (version 1.0.26): USB library for device discovery
+**Vendor Libraries (D2XX Bundle):**
+- `libftd2xx` (D2XX driver): FTDI's proprietary driver for HS2 communication
+- `libusb` (bundled with D2XX): USB library for device discovery
+
+**Note:** This project uses FTDI's D2XX driver exclusively (not libftdi). The D2XX driver provides better performance and reliability for JTAG operations.
 
 **System Dependencies Only:**
 - C standard library (libc, libm, libpthread)
 - Standard system headers
 
-**Benefits of Local Libraries:**
+**Benefits of D2XX Driver:**
+- Direct driver access without kernel driver dependency
+- Better performance for high-speed JTAG
+- No conflicts with ftdi_sio kernel module (when properly configured)
 - Reproducible builds across all platforms
-- Version-controlled library versions
-- No system-wide installations required
 - Works consistently for cross-compilation
 
 ## Installation
@@ -556,11 +561,33 @@ mode = off
 # Check FTDI devices
 lsusb -d 0403:6010
 
+# Check if ftdi_sio kernel module is using the device
+lsmod | grep ftdi_sio
+
+# If ftdi_sio is loaded, remove it to allow D2XX access
+sudo rmmod ftdi_sio
+sudo rmmod usbserial
+
+# Verify device is now accessible
+sudo xvc-discover
+
 # Check server logs
 sudo journalctl -u xvc-server -n 50
 
 # Force device discovery
 sudo kill -USR1 $(cat /var/run/xvc-server.pid)
+```
+
+**Note:** The `ftdi_sio` kernel module (USB serial driver) may claim the FTDI device before the D2XX driver can access it. If the XVC server cannot detect the FTDI chip, remove the kernel module:
+```bash
+sudo rmmod ftdi_sio
+sudo rmmod usbserial
+```
+
+To make this persistent across reboots, create a blacklist file:
+```bash
+echo "blacklist ftdi_sio" | sudo tee /etc/modprobe.d/blacklist-ftdi.conf
+echo "blacklist usbserial" | sudo tee -a /etc/modprobe.d/blacklist-ftdi.conf
 ```
 
 ### Connection Refused
@@ -581,12 +608,18 @@ grep "ip_whitelist" /etc/xvc-server/xvc-server.conf
 # Check device permissions
 sudo ls -l /dev/bus/usb/
 
-# Check FTDI library
-ldd /usr/local/bin/xvc-server | grep ftdi
+# Check if ftdi_sio is blocking D2XX access
+lsmod | grep ftdi_sio
+sudo rmmod ftdi_sio  # Remove if loaded
 
-# Test FTDI device directly
-sudo ftdi_eeprom --read --flash-size
+# Verify D2XX can detect device
+sudo xvc-discover
+
+# Check device with D2XX
+sudo ./bin/xvc-server -v /etc/xvc-server/xvc-server-multi.conf
 ```
+
+**Note:** The D2XX driver requires exclusive access to the FTDI device. The `ftdi_sio` kernel module must be removed before starting the XVC server.
 
 ## Performance Optimization
 
@@ -598,7 +631,35 @@ The JTAG speed is controlled by Vivado via the `settck:` command. Server respond
 - FT4232H: Up to 12 Mbps
 - FT232H: Up to 6 Mbps
 
-### Network Optimization
+### Network Latency Optimizations
+The XVC server includes several TCP optimizations to reduce latency on high-latency networks (e.g., 100ms+):
+
+| Optimization | Description | Benefit |
+|--------------|-------------|---------|
+| **TCP_QUICKACK** | Disables delayed ACKs (40ms timer) | **Critical** - Eliminates 40ms ACK delay on Linux |
+| **Large Buffers** | 256KB send/receive buffers | Prevents buffer exhaustion on high BDP networks |
+| **TCP_FASTOPEN** | Reduces connection setup time | Saves ~1 RTT on connection establishment |
+| **TCP_NODELAY** | Disables Nagle's algorithm | Sends small packets immediately |
+
+**Expected improvement on 100ms latency network:**
+- Before: ~140ms per XVC command (includes 40ms delayed ACK)
+- After: ~100ms per XVC command
+- **Improvement: ~29% reduction in latency**
+
+### Connection Model
+Each XVC server instance accepts **only one active connection at a time**. This design:
+- Prevents JTAG state conflicts between multiple clients
+- Ensures exclusive device access per instance
+- Rejects additional connections with a clear log message
+
+If a second client tries to connect while one is active:
+```
+[WARN] Rejecting connection from 192.168.1.100 - XVC session already active with fd=5
+```
+
+The new connection is rejected; the client should retry after the active session disconnects.
+
+### Network Configuration
 ```ini
 [network]
 tcp_nodelay = true
@@ -649,7 +710,7 @@ TCP/IP Connection (Port 2542)
        ↓
 ┌─────────────────────┐
 │  FTDI Adapter    │
-│  - libftdi1       │
+│  - libftd2xx      │
 │  - HS2 Control    │
 └─────────────────────┘
        ↓
@@ -702,7 +763,8 @@ When reporting issues, include:
 1. Server version: `xvc-server --version`
 2. System architecture: `uname -m`
 3. Linux kernel: `uname -r`
-4. libftdi version: `dpkg -l | grep libftdi1`
+4. D2XX driver: Check `vendor/d2xx/` for version
+5. Check ftdi_sio not loaded: `lsmod | grep ftdi_sio`
 5. Configuration files: `/etc/xvc-server/*`
 6. Relevant log excerpts
 7. Steps to reproduce
@@ -727,11 +789,22 @@ Contributions are welcome! Please:
 
 ## Changelog
 
-### Version 1.0.0 (Planned)
-- Initial release
-- Multi-HS2 device support
-- IP whitelisting
-- Persistent configuration
-- 24/7 stability features
-- ARM64 support
+### Version 1.0.0 (Current)
+- Multi-instance XVC server with D2XX driver support
+- **Single connection per instance** - prevents JTAG state conflicts
+- **TCP latency optimizations** for high-latency networks:
+  - TCP_QUICKACK (Linux) - eliminates 40ms delayed ACK penalty
+  - 256KB socket buffers - prevents buffer exhaustion
+  - TCP_FASTOPEN (Linux) - faster connection setup
+  - TCP_NODELAY - immediate packet transmission
+- IP whitelisting (strict/permissive/off modes)
+- Health monitoring and auto-recovery
+- Graceful shutdown and signal handling
+- ARM64 Linux support with cross-compilation
 - Systemd integration
+
+### Future Enhancements
+- REST API for management
+- Web-based health dashboard
+- Client authentication
+- Advanced statistics and metrics

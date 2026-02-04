@@ -231,7 +231,7 @@ int main(int argc, char *argv[])
             printf("Please check:\n");
             printf("  - USB connections\n");
             printf("  - USB permissions (try running with sudo)\n");
-            printf("  - Device drivers (libftdi1)\n");
+            printf("  - D2XX driver (FTDI proprietary)\n");
         }
         device_manager_shutdown(&mgr);
         return 0;

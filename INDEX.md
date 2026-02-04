@@ -97,7 +97,7 @@ DOCUMENTATION
 - What is Digilent HS2?
 - Why build a custom XVC server?
 - Use cases (development, production, CI/CD, education)
-- Technical background (FTDI, libftdi, JTAG)
+- Technical background (FTDI, D2XX driver, JTAG)
 - Network performance considerations
 - ARM64 Linux compatibility
 - Security considerations

@@ -49,7 +49,7 @@ The Digilent JTAG-HS2 is a high-speed USB-to-JTAG adapter based on the FTDI FT22
 
 1. **High Speed**: Up to 12 Mbps JTAG for fast bitstream downloads
 2. **USB 2.0**: Standard USB interface, works on any Linux system
-3. **Open Drivers**: libftdi provides open-source driver support
+3. **High Performance**: D2XX driver provides direct hardware access
 4. **Affordable**: Reasonably priced compared to enterprise debuggers
 5. **Widely Available**: Commonly used in FPGA development
 6. **FTDI Chip**: Well-documented, stable drivers
@@ -186,9 +186,9 @@ FT2232H USB Chip
     └── Custom descriptors
 ```
 
-### libftdi1 Library
+### D2XX Driver
 
-The libftdi1 library provides USB communication with FTDI devices.
+The D2XX driver is FTDI's proprietary driver that provides direct access to FTDI devices without using the kernel's serial driver.
 
 **Key Functions:**
 - `ftdi_init()`: Initialize FTDI context
@@ -378,7 +378,8 @@ scp bin/xvc-server arm64-server:/usr/local/bin/
 
 **1. Device Not Detected**
 - Check USB connection: `lsusb -d 0403:6010`
-- Verify libftdi installation: `ldd /usr/local/bin/xvc-server`
+- Check D2XX driver: `lsusb -d 0403:6010`
+- Verify no ftdi_sio conflict: `lsmod | grep ftdi_sio`
 - Check USB permissions: `ls -l /dev/bus/usb/`
 
 **2. Connection Refused**
@@ -467,7 +468,7 @@ lsof -p <pid>
 ### Official Documentation
 - [Xilinx Virtual Cable Protocol](https://github.com/Xilinx/XilinxVirtualCable)
 - [FTDI FT2232H Datasheet](https://www.ftdichip.com/Support/Documents/DataSheets/ICs/DS_FT2232H.pdf)
-- [libftdi1 Documentation](https://www.intra2net.com/en/developer/libftdi/documentation/)
+- [D2XX Programmer's Guide](https://ftdichip.com/document/programming-guides/)
 
 ### Community Resources
 - [xvcd (tmbinc)](https://github.com/tmbinc/xvcd)
