@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <arpa/inet.h>
 #include <getopt.h>
 #include "config.h"
 #include "device_manager.h"
@@ -37,6 +38,7 @@ typedef struct {
     tcp_server_t server;
     whitelist_t whitelist;
     xvc_context_t xvc;
+    tcp_connection_t *active_xvc_conn;  /* Track active XVC session */
 } instance_ctx_t;
 
 /* Signal handlers */
@@ -70,10 +72,33 @@ static void setup_signals(void)
     sigaction(SIGCHLD, &sa, NULL);
 }
 
+/* Callback: handle new connection */
+static int on_client_connect(void *user_data, tcp_connection_t *conn)
+{
+    instance_ctx_t *ctx = (instance_ctx_t*)user_data;
+    
+    /* Reject new connections if an XVC session is already active */
+    if (ctx->active_xvc_conn != NULL && ctx->active_xvc_conn != conn) {
+        char ip[INET_ADDRSTRLEN];
+        tcp_connection_ip(conn, ip, sizeof(ip));
+        LOG_WARN("Rejecting connection from %s - XVC session already active with fd=%d", 
+                 ip, ctx->active_xvc_conn->fd);
+        return 1;  /* Reject connection */
+    }
+    
+    return 0;  /* Accept connection */
+}
+
 /* Callback: handle incoming data on connection */
 static int on_client_data(void *user_data, tcp_connection_t *conn)
 {
     instance_ctx_t *ctx = (instance_ctx_t*)user_data;
+    
+    /* Mark this connection as having an active XVC session */
+    if (ctx->active_xvc_conn == NULL) {
+        ctx->active_xvc_conn = conn;
+        LOG_DBG("XVC session started on fd=%d", conn->fd);
+    }
     
     /* Handle XVC protocol - xvc_handle will re-init if socket changed */
     int ret = xvc_handle(&ctx->xvc, conn->fd, ctx->ftdi, ctx->config->xvc_buffer_size, ctx->config->frequency);
@@ -81,10 +106,23 @@ static int on_client_data(void *user_data, tcp_connection_t *conn)
     if (ret != 0) {
         xvc_close(&ctx->xvc);
         xvc_free(&ctx->xvc);
+        ctx->active_xvc_conn = NULL;  /* Clear active session */
         return 1;  /* Close connection */
     }
     
     return 0;  /* Continue */
+}
+
+/* Callback: handle connection disconnect */
+static void on_client_disconnect(void *user_data, tcp_connection_t *conn)
+{
+    instance_ctx_t *ctx = (instance_ctx_t*)user_data;
+    
+    /* Clear active XVC session if this was the active connection */
+    if (ctx->active_xvc_conn == conn) {
+        LOG_DBG("XVC session ended on fd=%d", conn->fd);
+        ctx->active_xvc_conn = NULL;
+    }
 }
 
 /* Run instance process */
@@ -151,7 +189,7 @@ static int run_instance(xvc_instance_config_t *inst_config)
         return 1;
     }
     
-    tcp_server_set_callbacks(&ctx.server, NULL, on_client_data, NULL, &ctx);
+    tcp_server_set_callbacks(&ctx.server, on_client_connect, on_client_data, on_client_disconnect, &ctx);
     
     if (tcp_server_start(&ctx.server) < 0) {
         LOG_ERROR("Failed to start TCP server on port %d", inst_config->port);
