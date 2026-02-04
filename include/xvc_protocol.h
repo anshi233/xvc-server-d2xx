@@ -92,10 +92,13 @@ void xvc_free(xvc_context_t *ctx);
 /**
  * Handle incoming data from client
  * @param ctx XVC context
+ * @param socket_fd Client socket (for auto-reinit on new connection)
+ * @param ftdi FTDI adapter context (for initialization)
+ * @param xvc_buffer_size Buffer size from config (0 to use existing/preserved value)
  * @param frequency Force frequency (0 to use client-specified)
  * @return 0 to continue, 1 to close connection, -1 on error
  */
-int xvc_handle(xvc_context_t *ctx, uint32_t frequency);
+int xvc_handle(xvc_context_t *ctx, int socket_fd, struct ftdi_context_s *ftdi, int xvc_buffer_size, uint32_t frequency);
 
 /**
  * Close XVC context

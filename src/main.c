@@ -75,13 +75,8 @@ static int on_client_data(void *user_data, tcp_connection_t *conn)
 {
     instance_ctx_t *ctx = (instance_ctx_t*)user_data;
     
-    /* Initialize XVC context for this connection if needed */
-    if (ctx->xvc.socket_fd != conn->fd) {
-        xvc_init(&ctx->xvc, conn->fd, ctx->ftdi, ctx->config->xvc_buffer_size);
-    }
-    
-    /* Handle XVC protocol */
-    int ret = xvc_handle(&ctx->xvc, ctx->config->frequency);
+    /* Handle XVC protocol - xvc_handle will re-init if socket changed */
+    int ret = xvc_handle(&ctx->xvc, conn->fd, ctx->ftdi, ctx->config->xvc_buffer_size, ctx->config->frequency);
     
     if (ret != 0) {
         xvc_close(&ctx->xvc);

@@ -165,9 +165,18 @@ void xvc_close(xvc_context_t *ctx)
               ctx->bytes_rx, ctx->bytes_tx, ctx->commands);
 }
 
-int xvc_handle(xvc_context_t *ctx, uint32_t frequency)
+int xvc_handle(xvc_context_t *ctx, int socket_fd, struct ftdi_context_s *ftdi, int xvc_buffer_size, uint32_t frequency)
 {
-    if (!ctx || !ctx->vector_buf || !ctx->result_buf) return -1;
+    if (!ctx) return -1;
+
+    /* Initialize on first call or when socket changes (new connection) */
+    if (!ctx->vector_buf || ctx->socket_fd != socket_fd) {
+        /* Use config buffer size if provided, otherwise preserve existing */
+        int buffer_size = xvc_buffer_size > 0 ? xvc_buffer_size : ctx->max_vector_size;
+        if (xvc_init(ctx, socket_fd, ftdi, buffer_size) < 0) {
+            return -1;
+        }
+    }
 
     char xvc_info[64];
     snprintf(xvc_info, sizeof(xvc_info), "%s:%d\n", XVC_VERSION, ctx->max_vector_size);
