@@ -237,17 +237,29 @@ int xvc_handle(xvc_context_t *ctx, int socket_fd, struct ftdi_context_s *ftdi, i
             break;
         }
         
-        /* Handle shift */
+        /* Handle shift - supports both "shift:" (v1.0) and "shifte:" (old protocol) */
         if (memcmp(ctx->cmd_buf, "sh", 2) == 0) {
             long long t_start = time_us();
             long long t_read = 0, t_scan = 0, t_write = 0;
 
+            /* Read next 4 bytes - could be "ift:" or "iftE" */
             if (xvc_read_exact(ctx->socket_fd, ctx->cmd_buf + 2, 4) != 1) {
                 return 1;
             }
             ctx->bytes_rx += 4;
 
-            /* Read length */
+            /* Check for old protocol format "shifte:" (used by Vivado 2018 and earlier) */
+            if (ctx->cmd_buf[4] == 'e' || ctx->cmd_buf[4] == 'E') {
+                /* Old protocol: "shifte:" - need to read the colon and then length */
+                char colon;
+                if (xvc_read_exact(ctx->socket_fd, &colon, 1) != 1) {
+                    return 1;
+                }
+                ctx->bytes_rx += 1;
+                LOG_DBG("shift: detected old protocol format (shifte:)");
+            }
+
+            /* Read length (4 bytes, little-endian) */
             if (xvc_read_exact(ctx->socket_fd, ctx->cmd_buf + 6, 4) != 1) {
                 LOG_ERROR("Reading shift length failed");
                 return 1;
