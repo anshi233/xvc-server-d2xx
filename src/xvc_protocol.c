@@ -8,6 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include "xvc_protocol.h"
 #include "ftdi_adapter.h"
 #include "logging.h"
@@ -59,6 +62,16 @@ int xvc_read_exact(int fd, void *buf, int len)
         p += r;
         len -= r;
     }
+    
+    /* Re-enable TCP_QUICKACK after reading data
+     * This ensures ACKs are sent immediately rather than being delayed
+     * TCP_QUICKACK is Linux-only and not persistent, so we must re-apply it
+     */
+    #ifdef TCP_QUICKACK
+    int flag = 1;
+    setsockopt(fd, IPPROTO_TCP, TCP_QUICKACK, &flag, sizeof(flag));
+    #endif
+    
     return 1;
 }
 

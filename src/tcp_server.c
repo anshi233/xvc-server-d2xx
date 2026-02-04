@@ -18,6 +18,11 @@
 #include "tcp_server.h"
 #include "logging.h"
 
+/* Socket buffer sizes for high-latency networks */
+#define TCP_RECV_BUFFER_SIZE  (256 * 1024)  /* 256KB receive buffer */
+#define TCP_SEND_BUFFER_SIZE  (256 * 1024)  /* 256KB send buffer */
+#define TCP_FASTOPEN_QUEUE_LEN 5
+
 int tcp_server_init(tcp_server_t *server, int port, whitelist_t *whitelist)
 {
     if (!server) return -1;
@@ -61,6 +66,17 @@ int tcp_server_start(tcp_server_t *server)
         server->listen_fd = -1;
         return -1;
     }
+    
+    /* Enable TCP Fast Open (Linux only) - reduces connection setup latency */
+    #ifdef TCP_FASTOPEN
+    int qlen = TCP_FASTOPEN_QUEUE_LEN;
+    if (setsockopt(server->listen_fd, IPPROTO_TCP, TCP_FASTOPEN,
+                   &qlen, sizeof(qlen)) < 0) {
+        LOG_DBG("TCP_FASTOPEN not available: %s", strerror(errno));
+    } else {
+        LOG_DBG("TCP_FASTOPEN enabled with queue len %d", qlen);
+    }
+    #endif
     
     /* Listen */
     if (listen(server->listen_fd, 5) < 0) {
@@ -199,10 +215,37 @@ int tcp_server_poll(tcp_server_t *server, int timeout_ms)
                 memcpy(&conn->addr, &client_addr, sizeof(client_addr));
                 conn->connected_at = time(NULL);
                 
-                /* Set TCP_NODELAY */
+                /* Set TCP_NODELAY - disable Nagle's algorithm for low latency */
                 int flag = 1;
-                setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, 
-                           &flag, sizeof(flag));
+                if (setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, 
+                               &flag, sizeof(flag)) < 0) {
+                    LOG_WARN("setsockopt(TCP_NODELAY) failed: %s", strerror(errno));
+                }
+                
+                /* Set TCP_QUICKACK - disable delayed ACKs (Linux only)
+                 * This is critical for XVC protocol on high-latency networks
+                 * as it prevents the 40ms delayed ACK timer from killing performance
+                 */
+                #ifdef TCP_QUICKACK
+                flag = 1;
+                if (setsockopt(client_fd, IPPROTO_TCP, TCP_QUICKACK,
+                               &flag, sizeof(flag)) < 0) {
+                    LOG_WARN("setsockopt(TCP_QUICKACK) failed: %s", strerror(errno));
+                }
+                LOG_DBG("TCP_QUICKACK enabled for fd=%d", client_fd);
+                #endif
+                
+                /* Increase socket buffer sizes for high-latency networks */
+                int rcvbuf = TCP_RECV_BUFFER_SIZE;
+                int sndbuf = TCP_SEND_BUFFER_SIZE;
+                if (setsockopt(client_fd, SOL_SOCKET, SO_RCVBUF, 
+                               &rcvbuf, sizeof(rcvbuf)) < 0) {
+                    LOG_WARN("setsockopt(SO_RCVBUF) failed: %s", strerror(errno));
+                }
+                if (setsockopt(client_fd, SOL_SOCKET, SO_SNDBUF,
+                               &sndbuf, sizeof(sndbuf)) < 0) {
+                    LOG_WARN("setsockopt(SO_SNDBUF) failed: %s", strerror(errno));
+                }
                 
                 server->connection_count++;
                 update_max_fd(server);
@@ -244,6 +287,16 @@ check_clients:
                     tcp_server_close_connection(server, conn);
                 }
             }
+            
+            /* Re-enable TCP_QUICKACK after each read operation
+             * TCP_QUICKACK is not persistent and resets after each ACK
+             * This is critical for maintaining low latency on XVC protocol
+             */
+            #ifdef TCP_QUICKACK
+            int flag = 1;
+            setsockopt(conn->fd, IPPROTO_TCP, TCP_QUICKACK, &flag, sizeof(flag));
+            #endif
+            
             events++;
         }
     }
