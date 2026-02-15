@@ -14,6 +14,7 @@
 #include <sys/wait.h>
 #include <arpa/inet.h>
 #include <getopt.h>
+#include <time.h>
 #include "config.h"
 #include "device_manager.h"
 #include "ftdi_adapter.h"
@@ -39,6 +40,11 @@ typedef struct {
     whitelist_t whitelist;
     xvc_context_t xvc;
     tcp_connection_t *active_xvc_conn;  /* Track active XVC session */
+    
+    /* Client IP locking for session persistence */
+    char locked_client_ip[INET_ADDRSTRLEN];  /* IP address of locked client */
+    time_t lock_until;                       /* Timestamp when lock expires */
+    bool is_locked;                          /* Whether instance is locked to a client IP */
 } instance_ctx_t;
 
 /* Signal handlers */
@@ -72,18 +78,92 @@ static void setup_signals(void)
     sigaction(SIGCHLD, &sa, NULL);
 }
 
+/* Helper: check if client IP matches the locked IP */
+static bool client_ip_matches(instance_ctx_t *ctx, tcp_connection_t *conn)
+{
+    if (!ctx->is_locked) {
+        return true;  /* No lock, any IP can connect */
+    }
+    
+    char client_ip[INET_ADDRSTRLEN];
+    tcp_connection_ip(conn, client_ip, sizeof(client_ip));
+    
+    return (strcmp(client_ip, ctx->locked_client_ip) == 0);
+}
+
+/* Helper: check if the client lock has expired */
+static bool is_lock_expired(instance_ctx_t *ctx)
+{
+    if (!ctx->is_locked) {
+        return true;  /* No lock */
+    }
+    
+    time_t now = time(NULL);
+    if (now >= ctx->lock_until) {
+        return true;  /* Lock expired */
+    }
+    
+    return false;
+}
+
+/* Helper: release the client IP lock */
+static void release_client_lock(instance_ctx_t *ctx)
+{
+    if (ctx->is_locked) {
+        LOG_INFO("Client IP lock released for %s", ctx->locked_client_ip);
+        ctx->is_locked = false;
+        ctx->locked_client_ip[0] = '\0';
+        ctx->lock_until = 0;
+    }
+}
+
+/* Helper: set client IP lock */
+static void set_client_lock(instance_ctx_t *ctx, const char *client_ip)
+{
+    if (ctx->config->client_lock_timeout > 0) {
+        strncpy(ctx->locked_client_ip, client_ip, INET_ADDRSTRLEN - 1);
+        ctx->locked_client_ip[INET_ADDRSTRLEN - 1] = '\0';
+        ctx->lock_until = time(NULL) + ctx->config->client_lock_timeout;
+        ctx->is_locked = true;
+        LOG_DBG("Client IP locked to %s (expires in %d seconds)", 
+                client_ip, ctx->config->client_lock_timeout);
+    }
+}
+
 /* Callback: handle new connection */
 static int on_client_connect(void *user_data, tcp_connection_t *conn)
 {
     instance_ctx_t *ctx = (instance_ctx_t*)user_data;
+    char client_ip[INET_ADDRSTRLEN];
+    tcp_connection_ip(conn, client_ip, sizeof(client_ip));
+    
+    /* Check if lock has expired (clean up old locks) */
+    if (ctx->is_locked && is_lock_expired(ctx)) {
+        LOG_INFO("Client IP lock for %s has expired, accepting new connections", 
+                 ctx->locked_client_ip);
+        release_client_lock(ctx);
+    }
     
     /* Reject new connections if an XVC session is already active */
     if (ctx->active_xvc_conn != NULL && ctx->active_xvc_conn != conn) {
-        char ip[INET_ADDRSTRLEN];
-        tcp_connection_ip(conn, ip, sizeof(ip));
         LOG_WARN("Rejecting connection from %s - XVC session already active with fd=%d", 
-                 ip, ctx->active_xvc_conn->fd);
+                 client_ip, ctx->active_xvc_conn->fd);
         return 1;  /* Reject connection */
+    }
+    
+    /* Check IP lock - only the locked IP can connect */
+    if (ctx->is_locked && !client_ip_matches(ctx, conn)) {
+        int remaining = (int)(ctx->lock_until - time(NULL));
+        LOG_WARN("Rejecting connection from %s - instance is locked to %s for %d more seconds", 
+                 client_ip, ctx->locked_client_ip, remaining);
+        return 1;  /* Reject connection */
+    }
+    
+    /* First connection to idle server - set the IP lock */
+    if (!ctx->is_locked && ctx->config->client_lock_timeout > 0) {
+        set_client_lock(ctx, client_ip);
+        LOG_INFO("Instance locked to client IP %s (timeout: %d seconds)", 
+                 client_ip, ctx->config->client_lock_timeout);
     }
     
     return 0;  /* Accept connection */
@@ -120,8 +200,18 @@ static void on_client_disconnect(void *user_data, tcp_connection_t *conn)
     
     /* Clear active XVC session if this was the active connection */
     if (ctx->active_xvc_conn == conn) {
-        LOG_DBG("XVC session ended on fd=%d", conn->fd);
+        char client_ip[INET_ADDRSTRLEN];
+        tcp_connection_ip(conn, client_ip, sizeof(client_ip));
+        
+        LOG_DBG("XVC session ended on fd=%d from %s", conn->fd, client_ip);
         ctx->active_xvc_conn = NULL;
+        
+        /* Set/refresh the IP lock when client disconnects */
+        if (ctx->config->client_lock_timeout > 0) {
+            set_client_lock(ctx, client_ip);
+            LOG_INFO("Client %s disconnected - instance locked for %d seconds", 
+                     client_ip, ctx->config->client_lock_timeout);
+        }
     }
 }
 

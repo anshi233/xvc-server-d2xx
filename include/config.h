@@ -24,6 +24,7 @@
 #define DEFAULT_XVC_BUFFER_SIZE 2048      /* Default XVC buffer size in bytes */
 #define MIN_XVC_BUFFER_SIZE     64        /* Minimum XVC buffer size */
 #define MAX_XVC_BUFFER_SIZE     536870912 /* Maximum XVC buffer size: 512MB */
+#define DEFAULT_CLIENT_LOCK_TIMEOUT 10    /* Default client IP lock timeout in seconds */
 
 /* Device ID types */
 typedef enum {
@@ -77,6 +78,9 @@ typedef struct {
     whitelist_mode_t whitelist_mode;
     whitelist_entry_t whitelist[MAX_WHITELIST_ENTRIES];
     int whitelist_count;
+    
+    /* Client IP lock settings */
+    int client_lock_timeout;    /* Seconds to lock instance to client IP after disconnect (0 = disabled) */
     
     /* Runtime state */
     bool enabled;

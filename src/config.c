@@ -65,6 +65,7 @@ void config_init(xvc_global_config_t *config)
         config->instances[i].jtag_mode = JTAG_MODE_MPSSE;  /* Default to fast MPSSE mode */
         config->instances[i].xvc_buffer_size = DEFAULT_XVC_BUFFER_SIZE;
         config->instances[i].whitelist_mode = WHITELIST_OFF;
+        config->instances[i].client_lock_timeout = DEFAULT_CLIENT_LOCK_TIMEOUT;
         config->instances[i].enabled = false;
     }
 }
@@ -223,6 +224,11 @@ int config_load(xvc_global_config_t *config, const char *path)
                                 size = MAX_XVC_BUFFER_SIZE;
                             }
                             inst->xvc_buffer_size = (int)size;
+                        } else if (strcmp(setting, "client_lock_timeout") == 0) {
+                            inst->client_lock_timeout = atoi(value);
+                            if (inst->client_lock_timeout < 0) {
+                                inst->client_lock_timeout = 0;
+                            }
                         }
                     }
                 }

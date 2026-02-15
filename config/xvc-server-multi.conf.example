@@ -59,11 +59,14 @@ instance_id_end = 32
 # Format: instance_id:setting=value
 #
 # Available settings:
-#   frequency         - JTAG TCK frequency in Hz (default: 30000000)
-#   latency_timer     - FTDI latency timer in ms (default: 2, range: 1-255)
-#   async             - Enable async I/O (default: true)
-#   interface         - FTDI interface (default: 0)
-#   xvc_buffer_size   - XVC max vector size in bytes (default: 2048, min: 64, max: 512MB)
+#   frequency           - JTAG TCK frequency in Hz (default: 30000000)
+#   latency_timer       - FTDI latency timer in ms (default: 2, range: 1-255)
+#   async               - Enable async I/O (default: true)
+#   interface           - FTDI interface (default: 0)
+#   xvc_buffer_size     - XVC max vector size in bytes (default: 2048, min: 64, max: 512MB)
+#   client_lock_timeout - Seconds to lock instance to client IP after disconnect
+#                         (default: 10, 0 = disabled). Prevents other users from
+#                         hijacking the session when Vivado reconnects.
 
 # Example: Set specific TCK frequency for instance 1
 1:frequency = 30000000
@@ -80,6 +83,15 @@ instance_id_end = 32
 # Example: Set large XVC buffer for high-throughput JTAG (up to 512MB)
 1:xvc_buffer_size = 65536
 2:xvc_buffer_size = 262144
+
+# Example: Set client lock timeout for session persistence
+# When a client disconnects, the instance remains locked to their IP
+# for this duration, preventing other users from hijacking the session
+1:client_lock_timeout = 10
+2:client_lock_timeout = 30
+
+# Example: Disable client locking for a specific instance (not recommended for multi-user)
+# 3:client_lock_timeout = 0
 
 [instance_aliases]
 # Human-readable aliases for instances
